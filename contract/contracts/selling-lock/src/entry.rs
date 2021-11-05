@@ -40,15 +40,17 @@ fn check_is_owner(args: &Bytes) -> Result<bool, Error> {
     Ok(is_owner)
 }
 
-fn get_self_capacity(args: &Bytes) -> u64 {
+fn get_self_capacity() -> Result<u64, Error> {
     let mut buf = [0u8; MINIMAL_CAPACITY_LEN];
-    let self_cell = QueryIter::new(load_cell, Source::Input)
-        .find(|cell: &CellOutput| {
-            debug!("get_self_capacity:");
-            cell.as_reader().lock().args().raw_data()[..] == args.as_ref()[..]
-        }).unwrap();
-    buf.copy_from_slice(self_cell.as_reader().capacity().raw_data());
-    u64::from_le_bytes(buf)
+
+    let capacity_list = QueryIter::new(load_cell, Source::GroupInput)
+        .map(|cell|{
+            debug!("now get_self_capacity:");
+            buf.copy_from_slice(cell.as_reader().capacity().raw_data());
+            Ok(u64::from_le_bytes(buf))
+        }).collect::<Result<Vec<_>, Error>>()?;
+
+    Ok(capacity_list.into_iter().sum::<u64>())
 }
 
 fn outputs_contains_owner_cell_with_no_type(args: &Bytes) -> Result<bool, Error> {
@@ -79,12 +81,19 @@ fn collect_outputs_owner_amount(args: &Bytes) -> Result<u64, Error> {
     Ok(capacity_list.into_iter().sum::<u64>())
 }
 
-fn get_price(data: &Bytes) -> u64 {
+fn get_price(data: &Bytes) -> Result<u64, Error> {
     let data_len = data.len();
     let start_point = data_len - MINIMAL_CAPACITY_LEN;
     let mut buf = [0u8; MINIMAL_CAPACITY_LEN];
-    buf.copy_from_slice(&data[start_point..data_len]);
-    u64::from_le_bytes(buf)
+
+    let capacity_list = QueryIter::new(load_cell, Source::GroupInput)
+        .map(|cell|{
+            debug!("now get_price:");
+            buf.copy_from_slice(&cell.as_reader().lock().args().raw_data()[start_point..]);
+            Ok(u64::from_le_bytes(buf))
+        }).collect::<Result<Vec<_>, Error>>()?;
+
+    Ok(capacity_list.into_iter().sum::<u64>())
 }
 pub fn main() -> Result<(), Error> {
     let script = load_script()?;
@@ -94,7 +103,7 @@ pub fn main() -> Result<(), Error> {
     buf.copy_from_slice(&args.as_ref()[0..32]);
     debug!("code hash is {:?}", buf);
 
-    let self_capacity = get_self_capacity(&args);
+    let self_capacity = get_self_capacity()?;
     debug!("self capacity is {:?}", self_capacity);
 
     if check_is_owner(&args)? {
@@ -107,7 +116,7 @@ pub fn main() -> Result<(), Error> {
          * output_owner_cell.capacity >= minimal_capaicty + self.capacity && 
          * output_owner_cell.type_script == null
          */
-        let sell_price = get_price(&args);
+        let sell_price = get_price(&args)?;
         let paid_price = collect_outputs_owner_amount(&args)?;
         debug!("sell price is {:?}", sell_price);
         debug!("paid price is {:?}", paid_price);
