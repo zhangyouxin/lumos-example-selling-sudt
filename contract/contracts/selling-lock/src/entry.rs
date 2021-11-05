@@ -29,6 +29,7 @@ fn selling_lock_args_same_as_script(args: &Bytes, lock: &Script) ->  bool {
 fn check_is_owner(args: &Bytes) -> Result<bool, Error> {
     let is_owner = QueryIter::new(load_cell_lock, Source::Input)
         .find(|lock: &Script| {
+            debug!("check_is_owner:");
             selling_lock_args_same_as_script(args, lock)
         }).is_some();
     Ok(is_owner)
@@ -38,6 +39,7 @@ fn get_self_capacity(args: &Bytes) -> u64 {
     let mut buf = [0u8; MINIMAL_CAPACITY_LEN];
     let self_cell = QueryIter::new(load_cell, Source::Input)
         .find(|cell: &CellOutput| {
+            debug!("get_self_capacity:");
             cell.as_reader().lock().args().raw_data()[..] == args.as_ref()[..]
         }).unwrap();
     buf.copy_from_slice(self_cell.as_reader().capacity().raw_data());
@@ -45,23 +47,29 @@ fn get_self_capacity(args: &Bytes) -> u64 {
 }
 
 fn outputs_contains_owner_cell(args: &Bytes) -> Result<bool, Error> {
-    let contains_owner_cell = QueryIter::new(load_cell, Source::GroupOutput)
+    let contains_owner_cell = QueryIter::new(load_cell, Source::Output)
         .find(|output: &CellOutput| {
+            debug!("outputs_contains_owner_cell:");
             selling_lock_args_same_as_script(args, &output.lock())
         }).is_some();
     Ok(contains_owner_cell)
 }
 
 fn collect_outputs_owner_amount(args: &Bytes) -> Result<u64, Error> {
+    debug!("enter collect_outputs_owner_amount:");
     let mut buf = [0u8; MINIMAL_CAPACITY_LEN];
-
-    let capacity_list = QueryIter::new(load_cell, Source::GroupOutput)
-        .filter(|cell: &CellOutput|{
-            selling_lock_args_same_as_script(args, &cell.lock()) && cell.type_().as_reader().is_none()
-        })
+    let capacity_list = QueryIter::new(load_cell, Source::Output)
         .map(|cell: CellOutput|{
-            buf.copy_from_slice(&cell.capacity().as_slice());
-            Ok(u64::from_le_bytes(buf))
+            debug!("now collect_outputs_owner_amount:");
+            debug!("selling_lock_args_same_as_script: {:?}",selling_lock_args_same_as_script(args, &cell.lock()));
+            debug!("cell.type_().as_reader().is_none(): {:?}",cell.type_().as_reader().is_none());
+            if selling_lock_args_same_as_script(args, &cell.lock()) && cell.type_().as_reader().is_none() {
+                debug!("&cell.capacity().raw_data(): {:?}",&cell.capacity().raw_data());
+                buf.copy_from_slice(&cell.capacity().raw_data());
+                return Ok(u64::from_le_bytes(buf));
+            } else {
+                return Ok(0u64)
+            }
         }).collect::<Result<Vec<_>, Error>>()?;
     Ok(capacity_list.into_iter().sum::<u64>())
 }
@@ -77,28 +85,32 @@ pub fn main() -> Result<(), Error> {
     let script = load_script()?;
     let args: Bytes = script.args().unpack();
     debug!("script args is {:?}", &args);
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&args.as_ref()[0..32]);
+    debug!("code hash is {:?}", buf);
 
     let self_capacity = get_self_capacity(&args);
+    debug!("self capacity is {:?}", self_capacity);
 
     if check_is_owner(&args)? {
-        /*
-         * unlock by owner
-         */
+        debug!("unlock by owner!");
         return Ok(());
     } else{
+        debug!("unlock by purchase!");
         /*
-         * unlock by purchase
-         * 
          * outputs.contains(owner_lock) && 
          * output_owner_cell.capacity >= minimal_capaicty + self.capacity && 
          * output_owner_cell.type_script == null
          */
-        let input_price = get_price(&args);
+        let sell_price = get_price(&args);
         let paid_price = collect_outputs_owner_amount(&args)?;
-        if outputs_contains_owner_cell(&args)? && paid_price >= input_price + self_capacity {
+        debug!("sell price is {:?}", sell_price);
+        debug!("paid price is {:?}", paid_price);
+        if outputs_contains_owner_cell(&args)? && paid_price >= sell_price + self_capacity {
             return Ok(());
-        }   
+        } else {
+            return Err(Error::MyError);
+        } 
     }
-    Ok(())
 }
 

@@ -1,43 +1,47 @@
 use super::*;
-use ckb_testtool::context::Context;
+use ckb_testtool::{builtin::ALWAYS_SUCCESS, context::Context};
 use ckb_testtool::ckb_types::{
     bytes::Bytes,
-    core::TransactionBuilder,
+    core::{TransactionBuilder},
     packed::*,
     prelude::*,
 };
-use ckb_testtool::ckb_error::Error;
 
 const MAX_CYCLES: u64 = 10_000_000;
 
-// error numbers
-const ERROR_EMPTY_ARGS: i8 = 5;
-
-fn assert_script_error(err: Error, err_code: i8) {
-    let error_string = err.to_string();
-    assert!(
-        error_string.contains(format!("error code {} ", err_code).as_str()),
-        "error_string: {}, expected_error_code: {}",
-        error_string,
-        err_code
-    );
-}
-
 #[test]
-fn test_success() {
+fn test_unlock_by_purchase() {
     // deploy contract
     let mut context = Context::default();
     let contract_bin: Bytes = Loader::default().load_binary("selling-lock");
     let out_point = context.deploy_cell(contract_bin);
 
-    // prepare scripts
+    // deploy always_success script
+    let always_success_out_point: OutPoint = context.deploy_cell(ALWAYS_SUCCESS.clone());
+
+    static ARGS_BYTES: &'static [u8] = &[48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 49, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 244, 1, 0, 0, 0, 0, 0, 0 ];
+    static OWNER_LOCK_CODE_HASH: &'static [u8] = &[48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49];
+    static OWNER_LOCK_ARGS: &'static [u8] = &[48, 49, 50, 51, 52, 53, 54, 55, 56, 57];
+    static OWNER_LOCK_HASH_TYPE: &'static [u8] = &[49];
+     // prepare scripts
     let lock_script = context
-        .build_script(&out_point, Bytes::from(vec![42]))
+        .build_script(&out_point, Bytes::from(ARGS_BYTES))
         .expect("script");
     let lock_script_dep = CellDep::new_builder()
         .out_point(out_point)
         .build();
 
+    let a_s_lock_script = context
+        .build_script(&always_success_out_point, Default::default())
+        .expect("script");
+    let a_s_lock_script_dep = CellDep::new_builder()
+        .out_point(always_success_out_point)
+        .build();
+
+    let owner_lock = ScriptBuilder::default()
+                            .code_hash(Byte32::from_slice(OWNER_LOCK_CODE_HASH).unwrap())
+                            .args(Bytes::from(OWNER_LOCK_ARGS).pack())
+                            .hash_type(Byte::from_slice(OWNER_LOCK_HASH_TYPE).unwrap());
     // prepare cells
     let input_out_point = context.create_cell(
         CellOutput::new_builder()
@@ -46,17 +50,28 @@ fn test_success() {
             .build(),
         Bytes::new(),
     );
+    let input_pay_cell_out_point = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(2000u64.pack())
+            .lock(a_s_lock_script.clone())
+            .build(),
+        Bytes::new(),
+    );
     let input = CellInput::new_builder()
         .previous_output(input_out_point)
         .build();
+    let pay_cell_input = CellInput::new_builder()
+        .previous_output(input_pay_cell_out_point)
+        .build();
+    let inputs = vec![input, pay_cell_input];
     let outputs = vec![
         CellOutput::new_builder()
-            .capacity(500u64.pack())
-            .lock(lock_script.clone())
+            .capacity(400u64.pack())
+            .lock(a_s_lock_script.clone())
             .build(),
         CellOutput::new_builder()
-            .capacity(500u64.pack())
-            .lock(lock_script)
+            .capacity(1500u64.pack())
+            .lock(owner_lock.build())
             .build(),
     ];
 
@@ -64,10 +79,11 @@ fn test_success() {
 
     // build transaction
     let tx = TransactionBuilder::default()
-        .input(input)
+        .inputs(inputs)
         .outputs(outputs)
         .outputs_data(outputs_data.pack())
         .cell_dep(lock_script_dep)
+        .cell_dep(a_s_lock_script_dep)
         .build();
     let tx = context.complete_tx(tx);
 
@@ -76,57 +92,4 @@ fn test_success() {
         .verify_tx(&tx, MAX_CYCLES)
         .expect("pass verification");
     println!("consume cycles: {}", cycles);
-}
-
-#[test]
-fn test_empty_args() {
-    // deploy contract
-    let mut context = Context::default();
-    let contract_bin: Bytes = Loader::default().load_binary("selling-lock");
-    let out_point = context.deploy_cell(contract_bin);
-
-    // prepare scripts
-    let lock_script = context
-        .build_script(&out_point, Default::default())
-        .expect("script");
-    let lock_script_dep = CellDep::new_builder()
-        .out_point(out_point)
-        .build();
-
-    // prepare cells
-    let input_out_point = context.create_cell(
-        CellOutput::new_builder()
-            .capacity(1000u64.pack())
-            .lock(lock_script.clone())
-            .build(),
-        Bytes::new(),
-    );
-    let input = CellInput::new_builder()
-        .previous_output(input_out_point)
-        .build();
-    let outputs = vec![
-        CellOutput::new_builder()
-            .capacity(500u64.pack())
-            .lock(lock_script.clone())
-            .build(),
-        CellOutput::new_builder()
-            .capacity(500u64.pack())
-            .lock(lock_script)
-            .build(),
-    ];
-
-    let outputs_data = vec![Bytes::new(); 2];
-
-    // build transaction
-    let tx = TransactionBuilder::default()
-        .input(input)
-        .outputs(outputs)
-        .outputs_data(outputs_data.pack())
-        .cell_dep(lock_script_dep)
-        .build();
-    let tx = context.complete_tx(tx);
-
-    // run
-    let err = context.verify_tx(&tx, MAX_CYCLES).unwrap_err();
-    assert_script_error(err, ERROR_EMPTY_ARGS);
 }
