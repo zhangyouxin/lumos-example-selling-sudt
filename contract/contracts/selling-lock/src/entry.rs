@@ -51,11 +51,11 @@ fn get_self_capacity(args: &Bytes) -> u64 {
     u64::from_le_bytes(buf)
 }
 
-fn outputs_contains_owner_cell(args: &Bytes) -> Result<bool, Error> {
+fn outputs_contains_owner_cell_with_no_type(args: &Bytes) -> Result<bool, Error> {
     let contains_owner_cell = QueryIter::new(load_cell, Source::Output)
         .find(|output: &CellOutput| {
             debug!("outputs_contains_owner_cell:");
-            selling_lock_args_same_as_script(args, &output.lock())
+            selling_lock_args_same_as_script(args, &output.lock()) && output.type_().as_reader().is_none()
         }).is_some();
     Ok(contains_owner_cell)
 }
@@ -111,7 +111,7 @@ pub fn main() -> Result<(), Error> {
         let paid_price = collect_outputs_owner_amount(&args)?;
         debug!("sell price is {:?}", sell_price);
         debug!("paid price is {:?}", paid_price);
-        if outputs_contains_owner_cell(&args)? && paid_price >= sell_price + self_capacity {
+        if outputs_contains_owner_cell_with_no_type(&args)? && paid_price >= sell_price + self_capacity {
             return Ok(());
         } else {
             return Err(Error::MyError);
