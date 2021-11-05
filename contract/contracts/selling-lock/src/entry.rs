@@ -21,6 +21,11 @@ const MINIMAL_CAPACITY_LEN: usize = 8;
 fn selling_lock_args_same_as_script(args: &Bytes, lock: &Script) ->  bool {
     let minimal_capacity_start_point = args.len() - MINIMAL_CAPACITY_LEN;
     let raw_args = args.as_ref();
+    debug!("lock.code_hash().as_reader().raw_data()[..] is {:?}", lock.code_hash().as_reader().raw_data());
+    debug!("lock.hash_type().as_reader().as_slice()[0] is {:?}",  lock.hash_type().as_reader().as_slice()[0]);
+    debug!("Byte::from(raw_args[32]).as_slice()[0] is {:?}",  Byte::from(raw_args[32]).as_slice()[0]);
+    debug!("lock.args().as_reader().raw_data()[..] is {:?}", lock.args().as_reader().raw_data());
+    debug!("raw_args[0..32] is {:?}", raw_args);
     lock.code_hash().as_reader().raw_data()[..] == raw_args[0..32] &&
     lock.hash_type().as_reader().as_slice()[0] == raw_args[32] &&
     lock.args().as_reader().raw_data()[..] == raw_args[33..minimal_capacity_start_point]
