@@ -1,4 +1,5 @@
 use super::*;
+use ckb_testtool::ckb_error::Error;
 use ckb_testtool::{builtin::ALWAYS_SUCCESS, context::Context};
 use ckb_testtool::ckb_types::{
     bytes::Bytes,
@@ -6,7 +7,6 @@ use ckb_testtool::ckb_types::{
     packed::*,
     prelude::*,
 };
-
 const MAX_CYCLES: u64 = 10_000_000;
 
 #[test]
@@ -93,7 +93,6 @@ fn test_unlock_by_purchase() {
         .expect("pass verification");
     println!("consume cycles: {}", cycles);
 }
-
 
 #[test]
 fn test_unlock_by_owner() {
@@ -273,4 +272,111 @@ fn test_sell_by_owner() {
         .verify_tx(&tx, MAX_CYCLES)
         .expect("pass verification");
     println!("consume cycles: {}", cycles);
+}
+
+#[test]
+
+/*
+ * build a tx with two selling lock inputs: 
+ * inputs[0]: self_capacity=1000, price: 500:
+ * inputs[1]: self_capacity=1000, price: 600
+ * so that minimal pay price should be 1000 + 500 + 1000 + 600 = 3100
+ */
+
+fn verify_purchase_multiple_should_fail() {
+    // deploy contract
+    let mut context = Context::default();
+    let contract_bin: Bytes = Loader::default().load_binary("selling-lock");
+    let out_point: OutPoint = context.deploy_cell(contract_bin);
+
+    // deploy always_success script
+    let always_success_out_point: OutPoint = context.deploy_cell(ALWAYS_SUCCESS.clone());
+
+    static ARGS_BYTES_PRICE_500: &'static [u8] = &[48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 49, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 244, 1, 0, 0, 0, 0, 0, 0 ];
+    static ARGS_BYTES_PRICE_600: &'static [u8] = &[48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 49, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 88, 2, 0, 0, 0, 0, 0, 0 ];
+    static OWNER_LOCK_CODE_HASH: &'static [u8] = &[48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49];
+    static OWNER_LOCK_ARGS: &'static [u8] = &[48, 49, 50, 51, 52, 53, 54, 55, 56, 57];
+    static OWNER_LOCK_HASH_TYPE: &'static [u8] = &[49];
+     // prepare scripts
+    let lock_script = context
+        .build_script(&out_point, Bytes::from(ARGS_BYTES_PRICE_500))
+        .expect("script");
+    let lock_script2 = context
+        .build_script(&out_point, Bytes::from(ARGS_BYTES_PRICE_600))
+        .expect("script");
+    let lock_script_dep = CellDep::new_builder()
+        .out_point(out_point.clone())
+        .build();
+
+    let a_s_lock_script = context
+        .build_script(&always_success_out_point, Default::default())
+        .expect("script");
+    let a_s_lock_script_dep = CellDep::new_builder()
+        .out_point(always_success_out_point)
+        .build();
+
+    let owner_lock = ScriptBuilder::default()
+                            .code_hash(Byte32::from_slice(OWNER_LOCK_CODE_HASH).unwrap())
+                            .args(Bytes::from(OWNER_LOCK_ARGS).pack())
+                            .hash_type(Byte::from_slice(OWNER_LOCK_HASH_TYPE).unwrap());
+    // prepare cells
+    let sell_lock_out_point1 = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(1000u64.pack())
+            .lock(lock_script.clone())
+            .build(),
+        Bytes::new(),
+    );
+    let sell_lock_out_point2 = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(1000u64.pack())
+            .lock(lock_script2.clone())
+            .build(),
+        Bytes::new(),
+    );
+    let input_pay_cell_out_point = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(5000u64.pack())
+            .lock(a_s_lock_script.clone())
+            .build(),
+        Bytes::new(),
+    );
+    let input1 = CellInput::new_builder()
+        .previous_output(sell_lock_out_point1)
+        .build();
+    let input2 = CellInput::new_builder()
+        .previous_output(sell_lock_out_point2)
+        .build();
+    let pay_cell_input = CellInput::new_builder()
+        .previous_output(input_pay_cell_out_point)
+        .build();
+    let inputs = vec![input1, input2, pay_cell_input];
+    let outputs = vec![
+        CellOutput::new_builder()
+            .capacity(200u64.pack())
+            .lock(a_s_lock_script.clone())
+            .build(),
+        CellOutput::new_builder()
+            .capacity(3000u64.pack())
+            .lock(owner_lock.build())
+            .build(),
+    ];
+
+    let outputs_data = vec![Bytes::new(); 2];
+
+    // build transaction
+    let tx = TransactionBuilder::default()
+        .inputs(inputs)
+        .outputs(outputs)
+        .outputs_data(outputs_data.pack())
+        .cell_dep(lock_script_dep)
+        .cell_dep(a_s_lock_script_dep)
+        .build();
+    let tx = context.complete_tx(tx);
+
+    // run
+    let error: Error = context
+        .verify_tx(&tx, MAX_CYCLES)
+        .unwrap_err();
+    println!("error: {:?}", error.kind());
 }
