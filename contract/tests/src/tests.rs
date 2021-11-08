@@ -133,7 +133,7 @@ fn test_unlock_by_owner() {
 
 #[test]
 fn test_unlock_by_purchase() {
-    let (mut context, tx) = build_test_context(vec![1000], 2000, UnlockMode::Purchase);
+    let (mut context, tx) = build_test_context(vec![1000], 1000, UnlockMode::Purchase);
     let tx = context.complete_tx(tx);
 
     // run
@@ -144,11 +144,23 @@ fn test_unlock_by_purchase() {
 }
 
 #[test]
-fn test_unlock_by_purchase_multiple() {
-    let (mut context, tx) = build_test_context(vec![500, 600], 3000, UnlockMode::Purchase);
+fn test_unlock_by_purchase_should_fail() {
+    let (mut context, tx) = build_test_context(vec![1000], 800, UnlockMode::Purchase);
     let tx = context.complete_tx(tx);
 
-    // should fail cause minimal pay price is 3100
+    // should fail cause minimal pay price is 1000
+    let error: Error = context
+        .verify_tx(&tx, MAX_CYCLES)
+        .unwrap_err();
+    println!("error: {:?}", error.kind());
+}
+
+#[test]
+fn test_unlock_by_purchase_multiple_should_fail() {
+    let (mut context, tx) = build_test_context(vec![500, 600], 1000, UnlockMode::Purchase);
+    let tx = context.complete_tx(tx);
+
+    // should fail cause minimal pay price is 1100
     let error: Error = context
         .verify_tx(&tx, MAX_CYCLES)
         .unwrap_err();

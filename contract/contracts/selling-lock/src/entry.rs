@@ -73,25 +73,6 @@ fn collect_outputs_owner_amount(args: &Bytes) -> Result<u64, Error> {
     Ok(capacity_list.into_iter().sum::<u64>())
 }
 
-fn get_self_capacity(selling_lock_code_hash: &[u8], selling_lock_hash_type: &u8) -> Result<u64, Error> {
-    let mut buf = [0u8; MINIMAL_CAPACITY_LEN];
-
-    let capacity_list = QueryIter::new(load_cell, Source::Input)
-        .map(|cell|{
-            debug!("now get_self_capacity:");
-            if selling_lock_args_code_hash_same_as_script(selling_lock_code_hash, selling_lock_hash_type, &cell.lock()) {
-                debug!("into the selling lock capacity:");
-                buf.copy_from_slice(cell.as_reader().capacity().as_slice());
-                Ok(u64::from_le_bytes(buf))
-            } else {
-                debug!("not the selling lock capacity:");
-                Ok(0u64)
-            }
-        }).collect::<Result<Vec<_>, Error>>()?;
-    debug!("self capacity_list is: {:?}", capacity_list);
-    Ok(capacity_list.into_iter().sum::<u64>())
-}
-
 fn get_price(selling_lock_code_hash: &[u8], selling_lock_hash_type: &u8) -> Result<u64, Error> {
     let capacity_list = QueryIter::new(load_cell, Source::Input)
         .map(|cell|{
@@ -123,9 +104,6 @@ pub fn main() -> Result<(), Error> {
     debug!("my code hash is {:?}", &selling_lock_code_hash);
     debug!("my hash type is {:?}", &selling_lock_hash_type);
 
-    let self_capacity = get_self_capacity(&selling_lock_code_hash, &selling_lock_hash_type)?;
-    debug!("self capacity is {:?}", self_capacity);
-
     if check_is_owner(&args)? {
         debug!("unlock by owner!");
         return Ok(());
@@ -140,7 +118,7 @@ pub fn main() -> Result<(), Error> {
         let paid_price = collect_outputs_owner_amount(&args)?;
         debug!("sell price is {:?}", sell_price);
         debug!("paid price is {:?}", paid_price);
-        if outputs_contains_owner_cell_with_no_type(&args)? && paid_price >= sell_price + self_capacity {
+        if outputs_contains_owner_cell_with_no_type(&args)? && paid_price >= sell_price {
             return Ok(());
         } else {
             return Err(Error::MyError);
