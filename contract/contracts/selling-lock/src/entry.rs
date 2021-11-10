@@ -17,27 +17,30 @@ struct SellingInfo {
     price: u64,
 }
 
+fn build_lock_from_args(args: &Bytes) -> Script {
+    let lock_start_point = args.len() - PRICE_LEN;
+    let lock_buf = args.as_ref()[33..lock_start_point].to_vec();
+    let lock = ScriptBuilder::default()
+        .code_hash(Byte32::new_unchecked(Bytes::from(args[0..32].to_vec())))
+        .hash_type(Byte::from(args[32]))
+        .args(Bytes::from(lock_buf).pack())
+        .build();
+    lock
+}
+
 fn load_selling_info() -> Result<SellingInfo, Error> {
     let script: Script = load_script()?;
     let args: Bytes = script.args().unpack();
-    let price_start_point = args.len() - PRICE_LEN;
     let mut price_buf = [0u8; PRICE_LEN];
-    let raw_args = args.as_ref();
-    let owner_lock = ScriptBuilder::default()
-        .code_hash(Byte32::new_unchecked(Bytes::from(raw_args[0..32].to_vec())))
-        .hash_type(Byte::from(raw_args[32]))
-        .args(Bytes::from(raw_args[33..price_start_point].to_vec()).pack())
-        .build();
-    price_buf.copy_from_slice(raw_args[price_start_point..].as_ref());
+    let price_start_point = args.len() - PRICE_LEN;
+    price_buf.copy_from_slice(&args.as_ref()[price_start_point..].as_ref());
     let price = u64::from_le_bytes(price_buf);
+    let owner_lock = build_lock_from_args(&args);
     Ok(SellingInfo{owner_lock, price})
 }
 
 fn is_owner_of_selling_info(other_lock: &Script, selling_info: &SellingInfo) ->  bool {
-    let owner_lock = &selling_info.owner_lock;
-    other_lock.code_hash().as_reader().raw_data()[..] == owner_lock.code_hash().as_reader().raw_data()[..] &&
-    other_lock.hash_type().as_reader().as_slice()[0] == owner_lock.hash_type().as_reader().as_slice()[0] &&
-    other_lock.args().as_reader().raw_data()[..] == owner_lock.args().as_reader().raw_data()[..]
+    other_lock.as_slice() == selling_info.owner_lock.as_slice()
 }
 
 fn is_selling_lock(lock: &Script) -> bool {
@@ -48,13 +51,7 @@ fn is_selling_lock(lock: &Script) -> bool {
 
 fn load_owner_lock_from_selling_lock(selling_lock: &Script) -> Script {
     let args: Bytes = selling_lock.args().unpack();
-    let owner_lock_start_point = args.len() - PRICE_LEN;
-    let owner_lock_buf = args.as_ref()[33..owner_lock_start_point].to_vec();
-    let owner_lock = ScriptBuilder::default()
-        .code_hash(Byte32::new_unchecked(Bytes::from(args[0..32].to_vec())))
-        .hash_type(Byte::from(args[32]))
-        .args(Bytes::from(owner_lock_buf).pack())
-        .build();
+    let owner_lock = build_lock_from_args(&args);
     owner_lock
 }
 
