@@ -1,12 +1,5 @@
-// Import from `core` instead of from `std` since we are in no-std mode
 use core::{result::Result};
-
-// Import heap related library from `alloc`
-// https://doc.rust-lang.org/alloc/index.html
 use alloc::{vec::Vec};
-
-// Import CKB syscalls and structures
-// https://nervosnetwork.github.io/ckb-std/riscv64imac-unknown-none-elf/doc/ckb_std/index.html
 use ckb_std::{
     debug,
     ckb_constants::Source,
@@ -15,70 +8,87 @@ use ckb_std::{
 };
 use crate::error::Error;
 
-// the data type is u64, so that we need 8 bytes to store it
-const MINIMAL_CAPACITY_LEN: usize = 8;
+const PRICE_LEN: usize = 8;
+struct SellingInfo {
+    // The owner of the selling lock
+    owner_lock: Script,
+    // minimal capacity should pay to the owner
+    #[allow(dead_code)]
+    price: u64,
+}
 
-fn get_owner_script(args: &Bytes) -> Script {
-    let minimal_capacity_start_point = args.len() - MINIMAL_CAPACITY_LEN;
+fn load_selling_info() -> Result<SellingInfo, Error> {
+    let script: Script = load_script()?;
+    let args: Bytes = script.args().unpack();
+    let price_start_point = args.len() - PRICE_LEN;
+    let mut price_buf = [0u8; PRICE_LEN];
     let raw_args = args.as_ref();
-    let owner_script = ScriptBuilder::default()
+    let owner_lock = ScriptBuilder::default()
         .code_hash(Byte32::new_unchecked(Bytes::from(raw_args[0..32].to_vec())))
         .hash_type(Byte::from(raw_args[32]))
-        .args(Bytes::from(raw_args[33..minimal_capacity_start_point].to_vec()).pack())
+        .args(Bytes::from(raw_args[33..price_start_point].to_vec()).pack())
         .build();
-    owner_script
+    price_buf.copy_from_slice(raw_args[price_start_point..].as_ref());
+    let price = u64::from_le_bytes(price_buf);
+    Ok(SellingInfo{owner_lock, price})
 }
 
-fn args_points_to_owner_lock(args: &Bytes, lock: &Script) ->  bool {
-    let minimal_capacity_start_point = args.len() - MINIMAL_CAPACITY_LEN;
-    let raw_args = args.as_ref();
-    debug!("args_points_to_owner_lock?");
-    debug!("lock.code_hash().as_reader().raw_data()[..] is {:?}", lock.code_hash().as_reader().raw_data());
-    debug!("raw_args is {:?}", &raw_args[..]);
-    lock.code_hash().as_reader().raw_data()[..] == raw_args[0..32] &&
-    lock.hash_type().as_reader().as_slice()[0] == raw_args[32] &&
-    lock.args().as_reader().raw_data()[..] == raw_args[33..minimal_capacity_start_point]
+fn is_owner_of_selling_info(other_lock: &Script, selling_info: &SellingInfo) ->  bool {
+    let owner_lock = &selling_info.owner_lock;
+    other_lock.code_hash().as_reader().raw_data()[..] == owner_lock.code_hash().as_reader().raw_data()[..] &&
+    other_lock.hash_type().as_reader().as_slice()[0] == owner_lock.hash_type().as_reader().as_slice()[0] &&
+    other_lock.args().as_reader().raw_data()[..] == owner_lock.args().as_reader().raw_data()[..]
 }
 
-fn selling_lock_args_code_hash_same_as_script(selling_lock_code_hash: &[u8], selling_lock_hash_type: &u8, owner_lock: &Script, lock: &Script) ->  bool {
-    let lock_args: Bytes = lock.args().unpack();
-    let is_selling_lock = lock.code_hash().as_reader().raw_data()[..] == selling_lock_code_hash[..] &&
-        lock.hash_type().as_reader().as_slice()[0] == *selling_lock_hash_type;
-    if !is_selling_lock {
+fn is_selling_lock(lock: &Script) -> bool {
+    let script: Script = load_script().unwrap();
+    lock.code_hash().as_reader().raw_data()[..] == script.code_hash().as_reader().raw_data()[..] &&
+    lock.hash_type().as_reader().as_slice()[0] == script.hash_type().as_reader().as_slice()[0]
+}
+
+fn load_owner_lock_from_selling_lock(selling_lock: &Script) -> Script {
+    let args: Bytes = selling_lock.args().unpack();
+    let owner_lock_start_point = args.len() - PRICE_LEN;
+    let owner_lock_buf = args.as_ref()[33..owner_lock_start_point].to_vec();
+    let owner_lock = ScriptBuilder::default()
+        .code_hash(Byte32::new_unchecked(Bytes::from(args[0..32].to_vec())))
+        .hash_type(Byte::from(args[32]))
+        .args(Bytes::from(owner_lock_buf).pack())
+        .build();
+    owner_lock
+}
+
+fn is_selling_lock_from_same_owner(selling_info: &SellingInfo, other_lock: &Script) -> bool {
+    if !is_selling_lock(other_lock) {
         return false;
     } else {
-        return args_points_to_owner_lock(&lock_args, owner_lock);
+        let owner_lock: &Script = &load_owner_lock_from_selling_lock(other_lock);
+        return is_owner_of_selling_info(owner_lock, selling_info);
     }
 }
 
-fn check_is_owner(args: &Bytes) -> Result<bool, Error> {
-    let is_owner = QueryIter::new(load_cell_lock, Source::Input)
-        .find(|lock: &Script| {
-            debug!("check_is_owner:");
-            args_points_to_owner_lock(args, lock)
-        }).is_some();
-    Ok(is_owner)
+fn load_selling_price(selling_info: &SellingInfo) -> Result<u64, Error> {
+    let price_list = QueryIter::new(load_cell, Source::Input)
+        .map(|cell|{
+            if is_selling_lock_from_same_owner(selling_info, &cell.lock()) {
+                let cell_args = cell.as_reader().lock().args().raw_data();
+                let data_len = cell_args.len();
+                let start_point = data_len - PRICE_LEN;
+                let mut buf = [0u8; PRICE_LEN];
+                buf.copy_from_slice(&cell_args[start_point..]);
+                Ok(u64::from_le_bytes(buf))
+            } else {
+                Ok(0u64)
+            }
+        }).collect::<Result<Vec<_>, Error>>()?;
+    Ok(price_list.into_iter().sum::<u64>())
 }
 
-fn outputs_contains_owner_cell_with_no_type(args: &Bytes) -> Result<bool, Error> {
-    let contains_owner_cell = QueryIter::new(load_cell, Source::Output)
-        .find(|output: &CellOutput| {
-            debug!("outputs_contains_owner_cell:");
-            args_points_to_owner_lock(args, &output.lock()) && output.type_().as_reader().is_none()
-        }).is_some();
-    Ok(contains_owner_cell)
-}
-
-fn collect_outputs_owner_amount(args: &Bytes) -> Result<u64, Error> {
-    debug!("enter collect_outputs_owner_amount:");
-    let mut buf = [0u8; MINIMAL_CAPACITY_LEN];
+fn load_paying_price(selling_info: &SellingInfo) -> Result<u64, Error> {
+    let mut buf = [0u8; PRICE_LEN];
     let capacity_list = QueryIter::new(load_cell, Source::Output)
         .map(|cell: CellOutput|{
-            debug!("now collect_outputs_owner_amount:");
-            debug!("args_points_to_owner_lock: {:?}",args_points_to_owner_lock(args, &cell.lock()));
-            debug!("cell.type_().as_reader().is_none(): {:?}",cell.type_().as_reader().is_none());
-            if args_points_to_owner_lock(args, &cell.lock()) && cell.type_().as_reader().is_none() {
-                debug!("&cell.capacity().raw_data(): {:?}",&cell.capacity().raw_data());
+            if is_owner_of_selling_info( &cell.lock(), selling_info) {
                 buf.copy_from_slice(&cell.capacity().raw_data());
                 return Ok(u64::from_le_bytes(buf));
             } else {
@@ -88,57 +98,47 @@ fn collect_outputs_owner_amount(args: &Bytes) -> Result<u64, Error> {
     Ok(capacity_list.into_iter().sum::<u64>())
 }
 
-fn get_price(selling_lock_code_hash: &[u8], selling_lock_hash_type: &u8, owner_script: &Script) -> Result<u64, Error> {
-    let capacity_list = QueryIter::new(load_cell, Source::Input)
-        .map(|cell|{
-            debug!("now get_price:");
-            if selling_lock_args_code_hash_same_as_script(selling_lock_code_hash, selling_lock_hash_type, owner_script, &cell.lock()) {
-                debug!("into the selling lock price:");
-                let cell_args = cell.as_reader().lock().args().raw_data();
-                let data_len = cell_args.len();
-                let start_point = data_len - MINIMAL_CAPACITY_LEN;
-                let mut buf = [0u8; MINIMAL_CAPACITY_LEN];
-                buf.copy_from_slice(&cell_args[start_point..]);
-                Ok(u64::from_le_bytes(buf))
-            } else {
-                debug!("not the selling lock capacity:");
-                Ok(0u64)
-            }
-        }).collect::<Result<Vec<_>, Error>>()?;
-    debug!("self capacity_list is: {:?}", capacity_list);
-    Ok(capacity_list.into_iter().sum::<u64>())
+fn unlock_by_owner(selling_info: &SellingInfo) -> Result<bool, Error> {
+    let is_owner_present = QueryIter::new(load_cell_lock, Source::Input)
+        .find(|lock: &Script| {
+            is_owner_of_selling_info(lock, selling_info)
+        }).is_some();
+    Ok(is_owner_present)
 }
-pub fn main() -> Result<(), Error> {
-    let script: Script = load_script()?;
-    let args: Bytes = script.args().unpack();
-    debug!("script args is {:?}", &args);
-    let owner_script = get_owner_script(&args);
-    let script_code_hash = script.code_hash();
-    let script_hash_type = script.hash_type();
-    let selling_lock_code_hash = &script_code_hash.as_reader().raw_data()[..];
-    let selling_lock_hash_type = &script_hash_type.as_reader().as_slice()[0];
-    debug!("my code hash is {:?}", &selling_lock_code_hash);
-    debug!("my hash type is {:?}", &selling_lock_hash_type);
 
-    if check_is_owner(&args)? {
-        debug!("unlock by owner!");
-        return Ok(());
-    } else{
-        debug!("unlock by purchase!");
-        /*
-         * outputs.contains(owner_lock) && 
-         * output_owner_cell.capacity >= minimal_capaicty + self.capacity && 
-         * output_owner_cell.type_script == null
-         */
-        let sell_price = get_price(&selling_lock_code_hash, &selling_lock_hash_type, &owner_script)?;
-        let paid_price = collect_outputs_owner_amount(&args)?;
-        debug!("sell price is {:?}", sell_price);
-        debug!("paid price is {:?}", paid_price);
-        if outputs_contains_owner_cell_with_no_type(&args)? && paid_price >= sell_price {
-            return Ok(());
-        } else {
-            return Err(Error::MyError);
-        } 
+fn unlock_by_purchase(selling_info: &SellingInfo) -> Result<(), Error> {
+    debug!("unlock by purchase");
+    if validate_paying_price(selling_info)? && validate_no_additional_type(selling_info)? {
+        return Ok(())
     }
+    Err(Error::InvalidUnlock)
+}
+
+fn validate_paying_price(selling_info:&SellingInfo) -> Result<bool, Error> {
+    let selling_price = load_selling_price(selling_info)?;
+    debug!("selling price: {}", selling_price);
+    let paying_price = load_paying_price(selling_info)?;
+    debug!("paying price price: {}", paying_price);
+    Ok(paying_price >= selling_price)
+}
+
+fn validate_no_additional_type(selling_info: &SellingInfo) -> Result<bool, Error> {
+    let has_additional_type = QueryIter::new(load_cell, Source::Output)
+        .find(|cell: &CellOutput| {
+            is_selling_lock_from_same_owner(selling_info, &cell.lock()) && cell.type_().as_reader().is_some()
+        }).is_some();
+    if has_additional_type {
+        return Err(Error::InvalidUnlock);
+    }
+    Ok(!has_additional_type)
+}
+
+pub fn main() -> Result<(), Error> {
+    let selling_info: SellingInfo = load_selling_info()?;
+    if unlock_by_owner(&selling_info)? {
+        debug!("unlock by owner");
+        return Ok(())
+    }
+    unlock_by_purchase(&selling_info)
 }
 
