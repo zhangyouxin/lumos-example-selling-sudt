@@ -17,15 +17,29 @@ struct SellingInfo {
     price: u64,
 }
 
-fn build_lock_from_args(args: &Bytes) -> Script {
-    let lock_start_point = args.len() - PRICE_LEN;
-    let lock_buf = args.as_ref()[33..lock_start_point].to_vec();
-    let lock = ScriptBuilder::default()
-        .code_hash(Byte32::new_unchecked(Bytes::from(args[0..32].to_vec())))
-        .hash_type(Byte::from(args[32]))
-        .args(Bytes::from(lock_buf).pack())
-        .build();
-    lock
+pub fn main() -> Result<(), Error> {
+    let selling_info: SellingInfo = load_selling_info()?;
+    if unlock_by_owner(&selling_info)? {
+        debug!("unlock by owner");
+        return Ok(())
+    }
+    unlock_by_purchase(&selling_info)
+}
+
+fn unlock_by_owner(selling_info: &SellingInfo) -> Result<bool, Error> {
+    let is_owner_present = QueryIter::new(load_cell_lock, Source::Input)
+        .find(|lock: &Script| {
+            is_owner_of_selling_info(lock, selling_info)
+        }).is_some();
+    Ok(is_owner_present)
+}
+
+fn unlock_by_purchase(selling_info: &SellingInfo) -> Result<(), Error> {
+    debug!("unlock by purchase");
+    if validate_paying_price(selling_info)? && validate_no_additional_type(selling_info)? {
+        return Ok(())
+    }
+    Err(Error::InvalidUnlock)
 }
 
 fn load_selling_info() -> Result<SellingInfo, Error> {
@@ -44,9 +58,9 @@ fn is_owner_of_selling_info(other_lock: &Script, selling_info: &SellingInfo) -> 
 }
 
 fn is_selling_lock(lock: &Script) -> bool {
-    let script: Script = load_script().unwrap();
-    lock.code_hash().as_reader().raw_data()[..] == script.code_hash().as_reader().raw_data()[..] &&
-    lock.hash_type().as_reader().as_slice()[0] == script.hash_type().as_reader().as_slice()[0]
+    let selling_lock: Script = load_script().unwrap();
+    lock.code_hash().as_slice() == selling_lock.code_hash().as_slice() &&
+    lock.hash_type().as_slice() == selling_lock.hash_type().as_slice()
 }
 
 fn load_owner_lock_from_selling_lock(selling_lock: &Script) -> Script {
@@ -95,22 +109,6 @@ fn load_paying_price(selling_info: &SellingInfo) -> Result<u64, Error> {
     Ok(capacity_list.into_iter().sum::<u64>())
 }
 
-fn unlock_by_owner(selling_info: &SellingInfo) -> Result<bool, Error> {
-    let is_owner_present = QueryIter::new(load_cell_lock, Source::Input)
-        .find(|lock: &Script| {
-            is_owner_of_selling_info(lock, selling_info)
-        }).is_some();
-    Ok(is_owner_present)
-}
-
-fn unlock_by_purchase(selling_info: &SellingInfo) -> Result<(), Error> {
-    debug!("unlock by purchase");
-    if validate_paying_price(selling_info)? && validate_no_additional_type(selling_info)? {
-        return Ok(())
-    }
-    Err(Error::InvalidUnlock)
-}
-
 fn validate_paying_price(selling_info:&SellingInfo) -> Result<bool, Error> {
     let selling_price = load_selling_price(selling_info)?;
     debug!("selling price: {}", selling_price);
@@ -130,12 +128,13 @@ fn validate_no_additional_type(selling_info: &SellingInfo) -> Result<bool, Error
     Ok(!has_additional_type)
 }
 
-pub fn main() -> Result<(), Error> {
-    let selling_info: SellingInfo = load_selling_info()?;
-    if unlock_by_owner(&selling_info)? {
-        debug!("unlock by owner");
-        return Ok(())
-    }
-    unlock_by_purchase(&selling_info)
+fn build_lock_from_args(args: &Bytes) -> Script {
+    let lock_start_point = args.len() - PRICE_LEN;
+    let lock_buf = args.as_ref()[33..lock_start_point].to_vec();
+    let lock = ScriptBuilder::default()
+        .code_hash(Byte32::new_unchecked(Bytes::from(args[0..32].to_vec())))
+        .hash_type(Byte::from(args[32]))
+        .args(Bytes::from(lock_buf).pack())
+        .build();
+    lock
 }
-
