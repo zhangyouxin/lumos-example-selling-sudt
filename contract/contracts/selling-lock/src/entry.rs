@@ -97,7 +97,7 @@ fn load_selling_price(selling_info: &SellingInfo) -> Result<u64, Error> {
 
 fn load_paying_price(selling_info: &SellingInfo) -> Result<u64, Error> {
     let mut buf = [0u8; PRICE_LEN];
-    let capacity_list = QueryIter::new(load_cell, Source::Output)
+    let inuput_capacity_list = QueryIter::new(load_cell, Source::Input)
         .map(|cell: CellOutput|{
             if is_owner_of_selling_info( &cell.lock(), selling_info) {
                 buf.copy_from_slice(&cell.capacity().raw_data());
@@ -106,7 +106,17 @@ fn load_paying_price(selling_info: &SellingInfo) -> Result<u64, Error> {
                 return Ok(0u64)
             }
         }).collect::<Result<Vec<_>, Error>>()?;
-    Ok(capacity_list.into_iter().sum::<u64>())
+
+    let output_capacity_list = QueryIter::new(load_cell, Source::Output)
+        .map(|cell: CellOutput|{
+            if is_owner_of_selling_info( &cell.lock(), selling_info) {
+                buf.copy_from_slice(&cell.capacity().raw_data());
+                return Ok(u64::from_le_bytes(buf));
+            } else {
+                return Ok(0u64)
+            }
+        }).collect::<Result<Vec<_>, Error>>()?;
+    Ok(output_capacity_list.into_iter().sum::<u64>() - inuput_capacity_list.into_iter().sum::<u64>())
 }
 
 fn validate_paying_price(selling_info:&SellingInfo) -> Result<bool, Error> {
