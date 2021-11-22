@@ -1,20 +1,17 @@
 import { HashType } from '@ckb-lumos/base';
 import { SCRIPTS } from '../config.json';
-import { Script, Cell, CellProvider, DepType, utils, HexString, Transaction } from '@ckb-lumos/base';
-import {
-  TransactionSkeletonType,
-  parseAddress,
+import {  Script, Cell, CellProvider, DepType, utils, HexString, Transaction } from '@ckb-lumos/base';
+import { TransactionSkeletonType,
+     parseAddress,
   sealTransaction,
-  TransactionSkeleton,
-} from '@ckb-lumos/helpers';
+  TransactionSkeleton,} from '@ckb-lumos/helpers';
 import { Indexer, CellCollector } from "@ckb-lumos/ckb-indexer"
 import { common } from "@ckb-lumos/common-scripts"
 import { key } from "@ckb-lumos/hd";
 import { BuyOptions, SellOptions } from '../selling-lock';
-import { RPC } from "@ckb-lumos/rpc";
+import { RPC  } from "@ckb-lumos/rpc";
 const { SELLING_LOCK, SUDT } = SCRIPTS;
 
-const CONFIG = require('../config.json');
 const FEE = BigInt(10000000);
 const SELL_CELL_CAPACITY = BigInt(200) * BigInt(100000000);
 // const INDEXER = new Indexer("http://127.0.0.1:9116", "http://127.0.0.1:9114");
@@ -32,11 +29,11 @@ export async function listSellingCells() {
     },
   })
   let cells: Cell[] = []
-
+ 
   for await (const cell of cellCollector.collect()) {
     cells.push(cell as Cell)
   }
-
+  
   return cells
 }
 
@@ -46,7 +43,7 @@ export async function buildBuyTx(_options: BuyOptions): Promise<TransactionSkele
   let skeleton = TransactionSkeleton({ cellProvider: INDEXER as CellProvider });
 
   await ckb.get_transaction(_options.selling.tx_hash).then(async (tx) => {
-    if (!tx) {
+    if(!tx) {
       throw new Error("Transaction not found");
     }
     const sellingCellOutput = tx.transaction.outputs[Number(_options.selling.index)];
@@ -72,11 +69,11 @@ export async function buildBuyTx(_options: BuyOptions): Promise<TransactionSkele
       return inputs.push(buyerCell);
     });
     const payingCell: Cell = {
-      cell_output: {
-        capacity: _options.sellPrice,
-        lock: buildLockFromArgs(args).lock,
-      },
-      data: "0x"
+        cell_output: {
+          capacity: _options.sellPrice,
+          lock: buildLockFromArgs(args).lock,
+        },
+        data: "0x"
     }
     skeleton = skeleton.update("outputs", (inputs) => {
       return inputs.push(payingCell);
@@ -99,18 +96,17 @@ export async function buildSellTx(_options: SellOptions): Promise<TransactionSke
     type: _options.sudt,
   })
   let cellsToSpend: Array<Cell> = []
-
+ 
   for await (const cell of cellCollector.collect()) {
     cellsToSpend.push(cell as Cell)
   }
   let sudtBalance = cellsToSpend.reduce((acc, cell) => acc + BigInt(cell.data), BigInt(0))
   if (sudtBalance < BigInt(_options.amount)) {
     throw new Error(`Not enough sudt balance: ${sudtBalance} < ${_options.amount}`)
-  }
+  } 
 
   console.log("sudtBalance is:", sudtBalance);
   console.log("cellToSpend is:", cellsToSpend);
-  console.log("getconfig is:", CONFIG);
 
   skeleton = addCellDeps(skeleton);
   skeleton = skeleton.update("inputs", (inputs) => {
@@ -152,7 +148,7 @@ export function signAndSeal(skeleton: TransactionSkeletonType, privKey: HexStrin
   return tx
 }
 
-export function buildLockFromArgs(args: HexString): { lock: Script, price: BigInt } {
+export function buildLockFromArgs(args: HexString): {lock: Script, price: BigInt} {
   let argslen = args.length;
   let codeHash = args.slice(2, 66);
   let hashType = BigInt(args.slice(66, 68));
@@ -170,44 +166,44 @@ export function buildLockFromArgs(args: HexString): { lock: Script, price: BigIn
 
 function addCellDeps(skeleton: TransactionSkeletonType): TransactionSkeletonType {
   // add secp256k1 lock script dep
-  skeleton = skeleton.update("cellDeps", (cellDeps) => {
-    return cellDeps.push({
-      out_point: {
-        tx_hash: CONFIG.SCRIPTS!.SECP256K1_BLAKE160!.TX_HASH,
-        index: CONFIG.SCRIPTS!.SECP256K1_BLAKE160!.INDEX,
-      },
-      dep_type: CONFIG.SCRIPTS!.SECP256K1_BLAKE160!.DEP_TYPE,
-    });
+ skeleton = skeleton.update("cellDeps", (cellDeps) => {
+  return cellDeps.push({
+    out_point: {
+      tx_hash: SCRIPTS!.SECP256K1_BLAKE160!.TX_HASH,
+      index: SCRIPTS!.SECP256K1_BLAKE160!.INDEX,
+    },
+    dep_type: SCRIPTS!.SECP256K1_BLAKE160!.DEP_TYPE as DepType,
   });
-  // add selling lock script dep
-  skeleton = skeleton.update("cellDeps", (cellDeps) => {
-    return cellDeps.push({
-      out_point: {
-        tx_hash: SELLING_LOCK.TX_HASH,
-        index: SELLING_LOCK.INDEX,
-      },
-      dep_type: SELLING_LOCK.DEP_TYPE as DepType,
-    });
+});
+ // add selling lock script dep
+ skeleton = skeleton.update("cellDeps", (cellDeps) => {
+  return cellDeps.push({
+    out_point: {
+      tx_hash: SELLING_LOCK.TX_HASH,
+      index: SELLING_LOCK.INDEX,
+    },
+    dep_type: SELLING_LOCK.DEP_TYPE as DepType,
   });
-  // add sudt script dep
-  skeleton = skeleton.update("cellDeps", (cellDeps) => {
-    return cellDeps.push({
-      out_point: {
-        tx_hash: SUDT.TX_HASH,
-        index: SUDT.INDEX,
-      },
-      dep_type: SUDT.DEP_TYPE as DepType,
-    });
+});
+// add sudt script dep
+skeleton = skeleton.update("cellDeps", (cellDeps) => {
+  return cellDeps.push({
+    out_point: {
+      tx_hash: SUDT.TX_HASH,
+      index: SUDT.INDEX,
+    },
+    dep_type: SUDT.DEP_TYPE as DepType,
   });
-  return skeleton
+});
+return skeleton
 }
 
-function fixInputsAndOutputs(skeleton: TransactionSkeletonType, inputsCount: number, outputsCount: number): TransactionSkeletonType {
+function fixInputsAndOutputs(skeleton: TransactionSkeletonType,inputsCount:number, outputsCount: number): TransactionSkeletonType {
   skeleton = skeleton.update("fixedEntries", (fixedEntries) => {
-    return fixedEntries.concat(Array(inputsCount).fill(0).map((_, index) => ({ field: "inputs", index })));
+    return fixedEntries.concat(Array(inputsCount).fill(0).map((_, index) => ({field: "inputs", index})));
   });
   skeleton = skeleton.update("fixedEntries", (fixedEntries) => {
-    return fixedEntries.concat(Array(outputsCount).fill(0).map((_, index) => ({ field: "outputs", index })));
+    return fixedEntries.concat(Array(outputsCount).fill(0).map((_, index) => ({field: "outputs", index})));
   });
   return skeleton
 }

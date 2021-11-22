@@ -1,0 +1,22 @@
+{
+  "files": {
+    "main.css": "/lumos-example-selling-sudt/static/css/main.4bd05329.chunk.css",
+    "main.js": "/lumos-example-selling-sudt/static/js/main.95fc98cb.chunk.js",
+    "main.js.map": "/lumos-example-selling-sudt/static/js/main.95fc98cb.chunk.js.map",
+    "runtime-main.js": "/lumos-example-selling-sudt/static/js/runtime-main.585b26d8.js",
+    "runtime-main.js.map": "/lumos-example-selling-sudt/static/js/runtime-main.585b26d8.js.map",
+    "static/js/2.da4b5023.chunk.js": "/lumos-example-selling-sudt/static/js/2.da4b5023.chunk.js",
+    "static/js/2.da4b5023.chunk.js.map": "/lumos-example-selling-sudt/static/js/2.da4b5023.chunk.js.map",
+    "static/js/3.1289c7a5.chunk.js": "/lumos-example-selling-sudt/static/js/3.1289c7a5.chunk.js",
+    "static/js/3.1289c7a5.chunk.js.map": "/lumos-example-selling-sudt/static/js/3.1289c7a5.chunk.js.map",
+    "index.html": "/lumos-example-selling-sudt/index.html",
+    "static/css/main.4bd05329.chunk.css.map": "/lumos-example-selling-sudt/static/css/main.4bd05329.chunk.css.map",
+    "static/js/2.da4b5023.chunk.js.LICENSE.txt": "/lumos-example-selling-sudt/static/js/2.da4b5023.chunk.js.LICENSE.txt"
+  },
+  "entrypoints": [
+    "static/js/runtime-main.585b26d8.js",
+    "static/js/2.da4b5023.chunk.js",
+    "static/css/main.4bd05329.chunk.css",
+    "static/js/main.95fc98cb.chunk.js"
+  ]
+}
