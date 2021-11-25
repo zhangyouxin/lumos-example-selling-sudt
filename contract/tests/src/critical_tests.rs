@@ -10,12 +10,6 @@ use ckb_testtool::ckb_types::{
 const MAX_CYCLES: u64 = 10_000_000;
 const SELF_CAPACITY: u64 = 1_000;
 
-#[derive(PartialEq, Eq)]
-enum UnlockMode {
-    Owner,
-    Purchase,
-}
-
 fn create_selling_lock_args(owner_lock: &Script,  price: u64) -> Bytes {
     let owner_lock_code_hash: Byte32 = owner_lock.code_hash();
     let owner_lock_hash_type: Byte = owner_lock.hash_type();
@@ -33,11 +27,8 @@ fn create_selling_lock_args(owner_lock: &Script,  price: u64) -> Bytes {
     )
 }
 
-fn build_test_context(
-    inputs_price: Vec<u64>,
-    pay_price: u64,
-    unlock_mode: UnlockMode,
-) -> (Context, TransactionView) {
+#[test]
+fn test_diffrent_seller_in_single_tx() {
     // deploy contract
     let mut context = Context::default();
     let contract_bin: Bytes = Loader::default().load_binary("selling-lock");
@@ -57,36 +48,35 @@ fn build_test_context(
         .out_point(always_success_out_point.clone())
         .build();
 
-    let owner_lock = context
+    let owner_lock_a = context
         .build_script(&always_success_out_point, Bytes::from(vec![8]))
         .expect("script");
+    let owner_lock_b = context
+        .build_script(&always_success_out_point, Bytes::from(vec![9]))
+        .expect("script");
 
-    let input_selling_locks = inputs_price
-        .iter()
-        .map(|price| {
-            let args = create_selling_lock_args(&owner_lock, *price);
-            context
-                .build_script(&out_point, args)
-                .expect("script")
-        })
-        .collect::<Vec<Script>>();
+    let selling_lock_a = context
+        .build_script(&out_point, create_selling_lock_args(&owner_lock_a, 500u64))
+        .expect("script");
+    let selling_lock_b = context
+        .build_script(&out_point, create_selling_lock_args(&owner_lock_b, 600u64))
+        .expect("script");
+    let input_selling_locks = vec![&selling_lock_a, &selling_lock_b];
     // prepare inputs and assign 1000 Bytes to per input
-    let mut payment_cell_lock = a_s_lock_script.clone();
-    if unlock_mode == UnlockMode::Owner {
-        payment_cell_lock = owner_lock.clone();
-    }
+    // alice has enough capacity to pay
     let input_pay_cell_out_point = context.create_cell(
         CellOutput::new_builder()
-            .capacity(pay_price.pack())
-            .lock(payment_cell_lock)
+            .capacity(3000u64.pack())
+            .lock(owner_lock_a.clone())
             .build(),
         Bytes::new(),
     );
+    // selling_lock_a and selling_lock_b
     let inputs = input_selling_locks.iter().map(|selling_lock| {
         let input_out_point = context.create_cell(
             CellOutput::new_builder()
                 .capacity(SELF_CAPACITY.pack())
-                .lock(selling_lock.clone())
+                .lock((*selling_lock).clone())
                 .build(),
             Bytes::new(),
         );
@@ -100,9 +90,9 @@ fn build_test_context(
         .previous_output(input_pay_cell_out_point)
         .build();
 
-    let payment_output = CellOutput::new_builder()
-        .capacity(pay_price.pack())
-        .lock(owner_lock.clone())
+    let payment_output_b = CellOutput::new_builder()
+        .capacity(600u64.pack())
+        .lock(owner_lock_b.clone())
         .build();
 
     let outputs_data = vec![Bytes::new(); 1];
@@ -110,18 +100,11 @@ fn build_test_context(
     let tx = TransactionBuilder::default()
     .input(input_pay_cell)
     .inputs(inputs)
-    .output(payment_output)
+    .output(payment_output_b)
     .outputs_data(outputs_data.pack())
     .cell_dep(lock_script_dep)
     .cell_dep(a_s_lock_script_dep)
     .build();
-
-    (context, tx)
-}
-
-#[test]
-fn test_unlock_by_owner() {
-    let (mut context, tx) = build_test_context(vec![1000], 100, UnlockMode::Owner);
     let tx = context.complete_tx(tx);
 
     // run
@@ -129,40 +112,4 @@ fn test_unlock_by_owner() {
         .verify_tx(&tx, MAX_CYCLES)
         .expect("pass verification");
     println!("cycles: {}", cycles);
-}
-
-#[test]
-fn test_unlock_by_purchase() {
-    let (mut context, tx) = build_test_context(vec![1000], 1000, UnlockMode::Purchase);
-    let tx = context.complete_tx(tx);
-
-    // run
-    let cycles = context
-        .verify_tx(&tx, MAX_CYCLES)
-        .expect("pass verification");
-    println!("cycles: {}", cycles);
-}
-
-#[test]
-fn test_unlock_by_purchase_should_fail() {
-    let (mut context, tx) = build_test_context(vec![1000], 800, UnlockMode::Purchase);
-    let tx = context.complete_tx(tx);
-
-    // should fail cause minimal pay price is 1000
-    let error: Error = context
-        .verify_tx(&tx, MAX_CYCLES)
-        .unwrap_err();
-    println!("error: {:?}", error.kind());
-}
-
-#[test]
-fn test_unlock_by_purchase_multiple_should_fail() {
-    let (mut context, tx) = build_test_context(vec![500, 600], 1000, UnlockMode::Purchase);
-    let tx = context.complete_tx(tx);
-
-    // should fail cause minimal pay price is 1100
-    let error: Error = context
-        .verify_tx(&tx, MAX_CYCLES)
-        .unwrap_err();
-    println!("error: {:?}", error.kind());
 }
